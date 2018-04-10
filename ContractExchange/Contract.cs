@@ -2,11 +2,12 @@
 using Neo.SmartContract.Framework.Services.Neo;
 using Neo.SmartContract.Framework.Services.System;
 using System;
+using System.Numerics;
 
 
 namespace ExchangeContract
 {
-    public class TheContract : SmartContract
+    public class Contract : SmartContract
     {
 
         private static readonly byte[] Empty = { };
@@ -16,9 +17,9 @@ namespace ExchangeContract
             public byte[] CreatorAddress;
             public byte[] OfferTokenID;
             public byte[] WantTokenID;
-            public int OfferAmount;
-            public int WantAmount;
-            public int AvailableAmount;
+            public BigInteger OfferAmount;
+            public BigInteger WantAmount;
+            public BigInteger AvailableAmount;
             public byte[] Nonce;
         }
 
@@ -31,10 +32,10 @@ namespace ExchangeContract
             {
                 CreatorAddress = creatorAddress.Take(20),
                 OfferTokenID = offerTokenID,
-                OfferAmount = BitConverter.ToInt32(offerAmount, 0),
+                OfferAmount = offerAmount.AsBigInteger(),
                 WantTokenID = wantAssetID,
-                WantAmount = BitConverter.ToInt32(wantAmount, 0),
-                AvailableAmount = BitConverter.ToInt32(availableAmount, 0),
+                WantAmount = wantAmount.AsBigInteger(),
+                AvailableAmount = availableAmount.AsBigInteger(),
                 Nonce = nonce
             };
         }
@@ -43,9 +44,20 @@ namespace ExchangeContract
 
 
 
-        public static void Main(string operation, params object[] args)
+        public static object Main(string operation, params object[] args)
         {
+            switch (operation)
+            {
+                case "create":
+                    return CreateOrder(
+                      NewOrder((Byte[])args[0], (Byte[]) args[1], (Byte[]) args[2], (Byte[]) args[3], (Byte[]) args[4], (Byte[]) args[5], (Byte[]) args[6]));
+                    
 
+
+
+
+            }
+            return false;
         }
 
 
@@ -67,17 +79,18 @@ namespace ExchangeContract
             return true;
         }
 
-        private static bool AcceptOrder(byte[] fillerAddress, byte[] tradingPair, byte[] orderHash, int amountToFill, bool useNativeTokens)
+        private static bool AcceptOrder(byte[] fillerAddress, byte[] tradingPair, byte[] orderHash, BigInteger amountToFill, bool useNativeTokens)
         {
-            // Check that transaction is signed
+            // Check if the transaction is signed
             if (!Runtime.CheckWitness(fillerAddress)) return false;
 
-            // Check that the filler is different from the creator
             Order order = GetOrder(tradingPair, orderHash);
             if (fillerAddress == order.CreatorAddress) return false;
 
             // Calculate amount that can be offered & filled
-            int amountToTake = (order.OfferAmount * amountToFill) / order.WantAmount;
+            BigInteger amountToTake = (order.OfferAmount * amountToFill) / order.WantAmount;
+
+            order.AvailableAmount = order.AvailableAmount - amountToTake;
 
             // Reduce available balance for the filled token and amount
             if (amountToFill > 0 && !UpdateBalance(fillerAddress, order.WantTokenID, amountToFill)) return false;
@@ -86,10 +99,6 @@ namespace ExchangeContract
             TransferToken(fillerAddress, order.OfferTokenID, amountToTake);
             TransferToken(order.CreatorAddress, order.WantTokenID, amountToFill);
 
-            // Update available amount
-            order.AvailableAmount = order.AvailableAmount - amountToTake;
-
-            // Store updated order
             StoreOrder(tradingPair, orderHash, order);
 
             return true;
@@ -103,7 +112,7 @@ namespace ExchangeContract
             {
                 Storage.Delete(Storage.CurrentContext, tradingPair.Concat(orderHash));
             }
-            // Store order otherwise
+            // Otherwise, store the order
             else
             {
                 Runtime.Log("Serializing order");
@@ -112,19 +121,19 @@ namespace ExchangeContract
             }
         }
 
-        private static void TransferToken(byte[] originator, byte[] assetID, int amount)
+        private static void TransferToken(byte[] originator, byte[] assetID, BigInteger amount)
         {
             byte[] key = BalanceKey(originator, assetID);
-            int currentBalance = BitConverter.ToInt32(Storage.Get(Storage.CurrentContext, key), 0);
+            BigInteger currentBalance = Storage.Get(Storage.CurrentContext, key).AsBigInteger();
             Storage.Put(Storage.CurrentContext, key, currentBalance + amount);
         }
 
-        private static bool UpdateBalance(byte[] address, byte[] assetID, int amount)
+        private static bool UpdateBalance(byte[] address, byte[] assetID, BigInteger amount)
         {
             if (amount <= 0) return false;
 
             var key = BalanceKey(address, assetID);
-            var currentBalance = BitConverter.ToInt32(Storage.Get(Storage.CurrentContext, key), 0);
+            var currentBalance = Storage.Get(Storage.CurrentContext, key).AsBigInteger();
             var newBalance = currentBalance - amount;
 
             if (newBalance < 0)
@@ -154,8 +163,8 @@ namespace ExchangeContract
         {
             var bytes = o.CreatorAddress
                 .Concat(TradingPair(o))
-                .Concat(BitConverter.GetBytes(o.OfferAmount))
-                .Concat(BitConverter.GetBytes(o.WantAmount))
+                .Concat(o.OfferAmount.AsByteArray())
+                .Concat(o.WantAmount.AsByteArray())
                 .Concat(o.Nonce);
 
             return Hash256(bytes);
